@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,35 +9,85 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type Todo struct {
-	ID        int    `json:"id"`
+	ID        primitive.ObjectID    `json:"_id,omitempty" bson:"_id,omitempty"`
 	Completed bool   `json:"completed"`
 	Body      string `json:"body"`
 }
 
+var collection *mongo.Collection
+
 var todos = []Todo{}
 
 func main() {
-	mux := http.NewServeMux()
 	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
+	
+	MONGODB_URI := os.Getenv("MONGODB_URI")
+	clientOptions := options.Client().ApplyURI(MONGODB_URI)
+	client, err := mongo.Connect(context.Background(), clientOptions)
+	
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	PORT := os.Getenv("PORT")
-
-	mux.HandleFunc("GET /api/todos", handleRoot)
-	mux.HandleFunc("POST /api/todos", addTodo)
+	defer client.Disconnect(context.Background())
+	
+	err = client.Ping(context.Background(), nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	
+	fmt.Println("Connected to MONGODB ATLAS")
+	
+	collection = client.Database("todo_list").Collection("todos")
+	
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/todos", getTodos)
+	mux.HandleFunc("POST /api/todos", createTodo)
 	mux.HandleFunc("PATCH /api/todos/{id}", updateTodoStatus)
 	mux.HandleFunc("DELETE /api/todos/{id}", deleteTodo)
-
-	fmt.Println("Server listening to :8000")
-	http.ListenAndServe(":" + PORT, mux)
+	
+	PORT := os.Getenv("PORT")
+	if PORT == "" {
+		PORT = "8000"
+	}
+	log.Fatal(http.ListenAndServe(":" + PORT, mux))
 }
 
-func handleRoot(w http.ResponseWriter, r *http.Request){
+func getTodos(w http.ResponseWriter, r *http.Request){
+	var todos []Todo
+
+	cursor, err := collection.Find(context.Background(), bson.M{})
+
+	if err != nil {
+		http.Error(
+			w, err.Error(), http.StatusInternalServerError,
+		)
+		return
+	}
+
+	defer cursor.Close(context.Background())
+
+	for cursor.Next(context.Background()){
+		var todo Todo
+		if err := cursor.Decode(&todo); err != nil {
+			http.Error(
+				w, err.Error(), http.StatusInternalServerError,
+			)
+			return
+		}
+		todos = append(todos, todo)
+	}
+
 	j, err := json.Marshal(todos)
 	if err != nil {
 		http.Error(
@@ -49,8 +100,8 @@ func handleRoot(w http.ResponseWriter, r *http.Request){
 	w.Write(j)
 }
 
-func addTodo(w http.ResponseWriter, r *http.Request){
-	todo := Todo{}
+func createTodo(w http.ResponseWriter, r *http.Request){
+	todo := new(Todo)
 
 	err := json.NewDecoder(r.Body).Decode(&todo)
 	if err != nil {
@@ -58,14 +109,19 @@ func addTodo(w http.ResponseWriter, r *http.Request){
 		return
 	}
 
-	
 	if todo.Body == "" {
 		http.Error(w, "Todo body is required", http.StatusBadRequest)
 		return
 	} 
 
-	todo.ID = len(todos) + 1
-	todos = append(todos, todo)
+	insertResult, err := collection.InsertOne(context.Background(), todo)
+	if err != nil {
+		http.Error(
+			w, err.Error(), http.StatusInternalServerError,
+		)
+		return
+	}
+	todo.ID = insertResult.InsertedID.(primitive.ObjectID)
 
 	w.WriteHeader(http.StatusCreated)
 	j, err:= json.Marshal(todo)
@@ -80,31 +136,52 @@ func addTodo(w http.ResponseWriter, r *http.Request){
 
 func updateTodoStatus(w http.ResponseWriter, r *http.Request){
 	id := r.PathValue("id")
-
-	for i, todo := range todos {
-		if fmt.Sprint(todo.ID) == id {
-			todos[i].Completed = !todos[i].Completed
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("todo has been updated"))
-			return
-		}
+	objectID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		http.Error(
+			w, err.Error(), http.StatusBadRequest,
+		)
+		return
 	}
 
-	w.WriteHeader(http.StatusNotFound)
+	filter := bson.M{"_id":objectID}
+	update := bson.M{"$set":bson.M{"completed":true}}
+
+	_, err = collection.UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		http.Error(
+			w, err.Error(), http.StatusInternalServerError,
+		)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("todo has been updated"))
+
 }
 
 func deleteTodo(w http.ResponseWriter, r *http.Request){
 	id := r.PathValue("id")
 
-	for i, todo := range todos {
-		if fmt.Sprint(todo.ID) == id {
-			todos = append(todos[:i], todos[i+1:]... )
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("todo has been deleted"))
-			return
-		}
+	objectID, err := primitive.ObjectIDFromHex(id)
+	if err != nil {
+		http.Error(
+			w, err.Error(), http.StatusBadRequest,
+		)
+		return
 	}
 
-	w.WriteHeader(http.StatusNotFound)
+	filter := bson.M{"_id":objectID}
+
+	_, err = collection.DeleteOne(context.Background(), filter)
+	if err != nil {
+		http.Error(
+			w, err.Error(), http.StatusInternalServerError,
+		)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("todo has been deleted"))
 
 }
