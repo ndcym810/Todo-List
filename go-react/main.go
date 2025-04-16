@@ -23,8 +23,6 @@ type Todo struct {
 
 var collection *mongo.Collection
 
-var todos = []Todo{}
-
 func main() {
 	err := godotenv.Load(".env")
 	if err != nil {
