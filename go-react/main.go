@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
+	"github.com/rs/cors"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -24,11 +25,15 @@ type Todo struct {
 var collection *mongo.Collection
 
 func main() {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatal("Error loading .env file")
+
+	if os.Getenv("ENV") != "production"{
+		// Load the .env file if not in production
+		err := godotenv.Load(".env")
+		if err != nil {
+			log.Fatal("Error loading .env file")
+		}
 	}
-	
+		
 	MONGODB_URI := os.Getenv("MONGODB_URI")
 	clientOptions := options.Client().ApplyURI(MONGODB_URI)
 	client, err := mongo.Connect(context.Background(), clientOptions)
@@ -49,6 +54,17 @@ func main() {
 	collection = client.Database("todo_list").Collection("todos")
 	
 	mux := http.NewServeMux()
+
+	handler := cors.Default().Handler(mux)
+	c:= cors.New(cors.Options{
+		AllowedOrigins: []string{"http://localhost:5173","http://localhost"},
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodPatch},
+		AllowCredentials: true,
+		// Enable Debugging for testing, consider disabling in production
+		Debug: true,
+	})
+	handler = c.Handler(handler)
+
 	mux.HandleFunc("GET /api/todos", getTodos)
 	mux.HandleFunc("POST /api/todos", createTodo)
 	mux.HandleFunc("PATCH /api/todos/{id}", updateTodoStatus)
@@ -58,7 +74,13 @@ func main() {
 	if PORT == "" {
 		PORT = "8000"
 	}
-	log.Fatal(http.ListenAndServe(":" + PORT, mux))
+
+	if os.Getenv("ENV") == "production" {
+		fs := http.FileServer(http.Dir("./client/dist"))
+		http.Handle("/", fs)
+	}
+
+	log.Fatal(http.ListenAndServe(":" + PORT, handler))
 }
 
 func getTodos(w http.ResponseWriter, r *http.Request){
@@ -154,7 +176,8 @@ func updateTodoStatus(w http.ResponseWriter, r *http.Request){
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("todo has been updated"))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(`"error":"todo has been updated"`)
 
 }
 
@@ -180,6 +203,8 @@ func deleteTodo(w http.ResponseWriter, r *http.Request){
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("todo has been deleted"))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(`"error":"todo has been deleted"`)
+	// w.Write([]byte("todo has been deleted"))
 
 }
