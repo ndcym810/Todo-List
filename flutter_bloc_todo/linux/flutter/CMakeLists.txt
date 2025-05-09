@@ -5,9 +5,21 @@ set(EPHEMERAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/ephemeral")
 
 # Define PROJECT_DIR as the parent directory of the current source directory
 get_filename_component(PROJECT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
-
 # Configuration provided via flutter tool.
-include(${EPHEMERAL_DIR}/generated_config.cmake)
+if(EXISTS ${EPHEMERAL_DIR}/generated_config.cmake)
+  include(${EPHEMERAL_DIR}/generated_config.cmake)
+else()
+  # Check if we're in a Flutter project structure
+  if(EXISTS "${PROJECT_DIR}/.metadata")
+    message(STATUS "Flutter ephemeral directory doesn't contain generated_config.cmake. Creating default configuration.")
+  else()
+    message(WARNING "This doesn't appear to be a Flutter project. Make sure you're running from the correct directory.")
+    message(STATUS "Creating default configuration as fallback.")
+  endif()
+  # Default configuration if the file doesn't exist
+  set(FLUTTER_VERSION "1.0.0" CACHE STRING "Flutter version")
+  set(FLUTTER_LIBRARY_NAME "flutter_linux_gtk" CACHE STRING "Flutter library name")
+endif()
 
 # TODO: Move the rest of this into files in ephemeral. See
 # https://github.com/flutter/flutter/issues/57146.

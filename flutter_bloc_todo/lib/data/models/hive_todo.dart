@@ -1,5 +1,5 @@
 import 'package:flutter_bloc_todo/domain/models/todo.dart';
-import 'package:hive/hive.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
 part 'hive_todo.g.dart';
 
